@@ -1,51 +1,160 @@
-import React, { useState, useEffect } from 'react';
-import { io, Socket } from 'socket.io-client';
+import React, { useState, useEffect, useRef } from 'react';
+import Pusher from 'pusher-js';
+import { v4 as uuidv4 } from 'uuid';
 import { motion } from 'motion/react';
 import { Users, RotateCcw, CheckCircle2, AlertCircle, Palette } from 'lucide-react';
-import { GameRoom, Color } from './types';
+import { GameRoom, Color, Player } from './types';
 import { COLOR_GRID } from './constants';
 
-const socket: Socket = io();
+const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY || '';
+const PUSHER_CLUSTER = import.meta.env.VITE_PUSHER_CLUSTER || '';
 
 export default function App() {
+  const [playerId] = useState(() => uuidv4());
   const [playerName, setPlayerName] = useState('');
   const [roomId, setRoomId] = useState('');
   const [room, setRoom] = useState<GameRoom | null>(null);
   const [isJoined, setIsJoined] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  
+  const roomRef = useRef<GameRoom | null>(null);
+  roomRef.current = room;
 
   useEffect(() => {
-    socket.on('room-update', (updatedRoom: GameRoom) => {
-      setRoom(updatedRoom);
+    if (!isJoined || !roomId) return;
+
+    if (!PUSHER_KEY) {
+      setConnectionError('Pusher keys are missing. Please configure PUSHER_KEY and PUSHER_CLUSTER in your environment variables.');
+      return;
+    }
+
+    const pusher = new Pusher(PUSHER_KEY, {
+      cluster: PUSHER_CLUSTER,
     });
 
+    const channel = pusher.subscribe(`room-${roomId}`);
+
+    channel.bind('game-event', (data: { action: string, payload: any, senderId: string }) => {
+      const { action, payload, senderId } = data;
+      
+      // Don't process our own events if we already updated locally (optimistic)
+      // but for simplicity here we process everything to ensure sync
+      
+      setRoom(prev => {
+        if (!prev && action !== 'JOIN') return null;
+        
+        const newRoom = prev ? { ...prev } : {
+          id: roomId,
+          players: [],
+          gameState: 'waiting' as const,
+          round: 1,
+          scores: {},
+          cueGiverIndex: 0,
+          targetColor: null,
+          guesses: [],
+          maxGuesses: 3,
+        };
+
+        switch (action) {
+          case 'JOIN':
+            if (!newRoom.players.find(p => p.id === payload.id)) {
+              newRoom.players.push({ id: payload.id, name: payload.name, score: 0 });
+              newRoom.scores[payload.id] = 0;
+            }
+            if (newRoom.players.length === 2 && newRoom.gameState === 'waiting') {
+              newRoom.gameState = 'picking';
+            }
+            // If we are the existing player, send our state to the new player
+            if (prev && senderId !== playerId) {
+              sendAction('SYNC_STATE', { state: newRoom });
+            }
+            break;
+
+          case 'SYNC_STATE':
+            if (senderId !== playerId) {
+              return payload.state;
+            }
+            break;
+
+          case 'PICK_COLOR':
+            newRoom.targetColor = payload.color;
+            newRoom.gameState = 'guessing';
+            newRoom.guesses = [];
+            break;
+
+          case 'GUESS_COLOR':
+            newRoom.guesses.push(payload.color);
+            const isCorrect = payload.color.id === newRoom.targetColor?.id;
+            if (isCorrect || newRoom.guesses.length >= newRoom.maxGuesses) {
+              if (isCorrect) {
+                newRoom.scores[senderId] = (newRoom.scores[senderId] || 0) + 1;
+                const pIndex = newRoom.players.findIndex(p => p.id === senderId);
+                if (pIndex !== -1) newRoom.players[pIndex].score = newRoom.scores[senderId];
+              }
+              newRoom.gameState = 'results';
+            }
+            break;
+
+          case 'NEXT_ROUND':
+            newRoom.cueGiverIndex = (newRoom.cueGiverIndex + 1) % 2;
+            newRoom.gameState = 'picking';
+            newRoom.targetColor = null;
+            newRoom.guesses = [];
+            newRoom.round += 1;
+            break;
+        }
+
+        return newRoom;
+      });
+    });
+
+    // Initial Join
+    sendAction('JOIN', { id: playerId, name: playerName });
+
     return () => {
-      socket.off('room-update');
+      pusher.unsubscribe(`room-${roomId}`);
+      pusher.disconnect();
     };
-  }, []);
+  }, [isJoined, roomId]);
+
+  const sendAction = async (action: string, payload: any) => {
+    try {
+      await fetch('/api/game/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          action,
+          payload: { ...payload, senderId: playerId },
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to send action:', err);
+    }
+  };
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
     if (playerName && roomId) {
-      socket.emit('join-room', { roomId, playerName });
       setIsJoined(true);
     }
   };
 
   const handlePickColor = (color: Color) => {
-    if (room && room.gameState === 'picking' && socket.id === room.players[room.cueGiverIndex].id) {
-      socket.emit('pick-color', { roomId: room.id, color });
+    if (room && room.gameState === 'picking' && playerId === room.players[room.cueGiverIndex].id) {
+      sendAction('PICK_COLOR', { color });
     }
   };
 
   const handleGuessColor = (color: Color) => {
-    if (room && room.gameState === 'guessing' && socket.id !== room.players[room.cueGiverIndex].id) {
-      socket.emit('guess-color', { roomId: room.id, color });
+    if (room && room.gameState === 'guessing' && playerId !== room.players[room.cueGiverIndex].id) {
+      sendAction('GUESS_COLOR', { color });
     }
   };
 
   const handleNextRound = () => {
     if (room) {
-      socket.emit('next-round', { roomId: room.id });
+      sendAction('NEXT_ROUND', {});
     }
   };
 
@@ -102,13 +211,40 @@ export default function App() {
 
   if (!room) {
     return (
-      <div className="min-h-screen bg-[#E4E3E0] flex items-center justify-center">
-        <div className="animate-pulse text-black/50 font-medium">Connecting to room...</div>
+      <div className="min-h-screen bg-[#E4E3E0] flex items-center justify-center p-6">
+        <div className="max-w-md w-full text-center">
+          {connectionError ? (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="bg-white p-8 rounded-2xl shadow-xl border border-red-100"
+            >
+              <AlertCircle className="text-red-500 w-12 h-12 mx-auto mb-4" />
+              <h2 className="text-xl font-bold mb-2">Configuration Required</h2>
+              <p className="text-sm text-black/60 mb-6 leading-relaxed">
+                {connectionError}
+              </p>
+              <a 
+                href="https://dashboard.pusher.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block w-full bg-black text-white py-3 rounded-xl font-bold text-center"
+              >
+                Get Pusher Keys
+              </a>
+            </motion.div>
+          ) : (
+            <div className="flex flex-col items-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-4 border-black border-t-transparent mb-4"></div>
+              <div className="text-black/50 font-medium">Connecting to room...</div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
 
-  const isCueGiver = socket.id === room.players[room.cueGiverIndex]?.id;
+  const isCueGiver = playerId === room.players[room.cueGiverIndex]?.id;
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans">
@@ -130,7 +266,7 @@ export default function App() {
               {room.players.map((p) => (
                 <div key={p.id} className="flex flex-col items-end">
                   <span className="text-[10px] uppercase font-bold tracking-tighter text-black/40">
-                    {p.id === socket.id ? 'You' : 'Opponent'}
+                    {p.id === playerId ? 'You' : 'Opponent'}
                   </span>
                   <div className="flex items-center gap-2">
                     <span className="font-bold">{p.name}</span>

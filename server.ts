@@ -1,117 +1,49 @@
 import express from "express";
-import { createServer } from "http";
-import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import Pusher from "pusher";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const pusher = new Pusher({
+  appId: process.env.PUSHER_APP_ID || "",
+  key: process.env.PUSHER_KEY || "",
+  secret: process.env.PUSHER_SECRET || "",
+  cluster: process.env.PUSHER_CLUSTER || "",
+  useTLS: true,
+});
 
 async function startServer() {
   const app = express();
-  const httpServer = createServer(app);
-  const io = new Server(httpServer, {
-    cors: {
-      origin: "*",
-    },
-  });
+  app.use(express.json());
 
   const PORT = 3000;
 
-  // Game State
-  const rooms = new Map<string, any>();
+  // Stateless Game API
+  // In a serverless environment, we don't store 'rooms' in memory.
+  // Instead, we broadcast actions, and clients maintain the state, 
+  // or we use an external DB. For this demo, we'll broadcast state updates.
 
-  io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
+  app.post("/api/game/action", async (req, res) => {
+    const { roomId, action, payload } = req.body;
 
-    socket.on("join-room", ({ roomId, playerName }) => {
-      socket.join(roomId);
-      
-      if (!rooms.has(roomId)) {
-        rooms.set(roomId, {
-          id: roomId,
-          players: [],
-          gameState: "waiting", // waiting, picking, guessing, results
-          round: 1,
-          scores: {},
-          cueGiverIndex: 0,
-          targetColor: null,
-          guesses: [],
-          maxGuesses: 3,
-        });
-      }
+    if (!roomId || !action) {
+      return res.status(400).json({ error: "Missing roomId or action" });
+    }
 
-      const room = rooms.get(roomId);
-      
-      // Check if player already in room (reconnect logic simplified)
-      const existingPlayer = room.players.find((p: any) => p.id === socket.id);
-      if (!existingPlayer && room.players.length < 2) {
-        room.players.push({ id: socket.id, name: playerName, score: 0 });
-        room.scores[socket.id] = 0;
-      }
-
-      io.to(roomId).emit("room-update", room);
-
-      if (room.players.length === 2 && room.gameState === "waiting") {
-        room.gameState = "picking";
-        io.to(roomId).emit("room-update", room);
-      }
-    });
-
-    socket.on("pick-color", ({ roomId, color }) => {
-      const room = rooms.get(roomId);
-      if (!room) return;
-
-      const cueGiver = room.players[room.cueGiverIndex];
-      if (socket.id !== cueGiver.id) return;
-
-      room.targetColor = color;
-      room.gameState = "guessing";
-      room.guesses = [];
-      io.to(roomId).emit("room-update", room);
-    });
-
-    socket.on("guess-color", ({ roomId, color }) => {
-      const room = rooms.get(roomId);
-      if (!room) return;
-
-      const guesserIndex = (room.cueGiverIndex + 1) % 2;
-      const guesser = room.players[guesserIndex];
-      if (socket.id !== guesser.id) return;
-
-      room.guesses.push(color);
-
-      // Check if correct (simplified: exact match or very close)
-      // In Hues and Cues, it's about proximity. 
-      // For this digital version, let's say "correct" is exact or we show distance.
-      const isCorrect = color.id === room.targetColor.id;
-
-      if (isCorrect || room.guesses.length >= room.maxGuesses) {
-        if (isCorrect) {
-          room.scores[socket.id] += 1;
-          room.players[guesserIndex].score = room.scores[socket.id];
-        }
-        
-        room.gameState = "results";
-        io.to(roomId).emit("room-update", room);
-      } else {
-        io.to(roomId).emit("room-update", room);
-      }
-    });
-
-    socket.on("next-round", ({ roomId }) => {
-      const room = rooms.get(roomId);
-      if (!room) return;
-
-      room.cueGiverIndex = (room.cueGiverIndex + 1) % 2;
-      room.gameState = "picking";
-      room.targetColor = null;
-      room.guesses = [];
-      room.round += 1;
-      io.to(roomId).emit("room-update", room);
-    });
-
-    socket.on("disconnect", () => {
-      console.log("User disconnected:", socket.id);
-      // Optional: Handle player leaving room
-    });
+    // Broadcast the action to everyone in the room via Pusher
+    try {
+      await pusher.trigger(`room-${roomId}`, `game-event`, {
+        action,
+        payload,
+        senderId: payload.senderId,
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Pusher error:", error);
+      res.status(500).json({ error: "Failed to broadcast action" });
+    }
   });
 
   // Vite middleware for development
@@ -128,7 +60,7 @@ async function startServer() {
     });
   }
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
