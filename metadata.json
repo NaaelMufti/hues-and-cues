@@ -1,0 +1,5 @@
+{
+  "name": "Hues & Cues Online",
+  "description": "A 2-player color guessing game based on the popular board game. One player picks a color, the other guesses it using clues.",
+  "requestFramePermissions": []
+}
