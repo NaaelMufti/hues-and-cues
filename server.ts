@@ -25,7 +25,7 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
 
-    socket.on("join-room", ({ roomId, playerName }) => {
+    socket.on("join-room", ({ roomId, playerName, playerId }) => {
       socket.join(roomId);
       
       if (!rooms.has(roomId)) {
@@ -44,11 +44,14 @@ async function startServer() {
 
       const room = rooms.get(roomId);
       
-      // Check if player already in room
-      const existingPlayer = room.players.find((p: any) => p.id === socket.id);
-      if (!existingPlayer && room.players.length < 2) {
-        room.players.push({ id: socket.id, name: playerName, score: 0 });
-        room.scores[socket.id] = 0;
+      // Check if player already in room by playerId
+      const existingPlayer = room.players.find((p: any) => p.playerId === playerId);
+      if (existingPlayer) {
+        // Update socket ID on reconnection so existing logic works
+        existingPlayer.id = socket.id;
+      } else if (room.players.length < 2) {
+        room.players.push({ id: socket.id, playerId, name: playerName, score: 0 });
+        room.scores[playerId] = 0;
       }
 
       io.to(roomId).emit("room-update", room);
@@ -93,8 +96,8 @@ async function startServer() {
 
       if (isCorrect || room.guesses.length >= room.maxGuesses) {
         if (isCorrect) {
-          room.scores[socket.id] += 1;
-          room.players[guesserIndex].score = room.scores[socket.id];
+          room.scores[guesser.playerId] += 1;
+          room.players[guesserIndex].score = room.scores[guesser.playerId];
         }
         
         room.gameState = "results";
