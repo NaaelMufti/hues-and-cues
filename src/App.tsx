@@ -296,7 +296,7 @@ export default function App() {
                   <h2 className="text-xl font-bold tracking-tight">The Spectrum</h2>
                   <div className="flex items-center gap-2 text-xs font-mono text-black/40">
                     <span className="w-2 h-2 rounded-full bg-black/10" />
-                    16 Rows × 30 Columns
+                    24 Rows × 30 Columns
                   </div>
                 </div>
 
