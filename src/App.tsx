@@ -257,11 +257,21 @@ export default function App() {
                           <div className="w-8 h-8 rounded-lg border border-black/10 shadow-sm" style={{ backgroundColor: g.hex }} />
                           <span className="text-xs font-mono font-bold">Guess {i + 1}</span>
                         </div>
-                        {room.targetColor?.id === g.id ? (
-                          <CheckCircle2 size={16} className="text-emerald-500" />
-                        ) : (
-                          <AlertCircle size={16} className="text-black/20" />
-                        )}
+                        {(() => {
+                          const targetIndex = room.targetColor?.id ?? -1;
+                          const guessIndex = g.id;
+                          const targetRow = Math.floor(targetIndex / 30);
+                          const targetCol = targetIndex % 30;
+                          const guessRow = Math.floor(guessIndex / 30);
+                          const guessCol = guessIndex % 30;
+                          const isCorrect = Math.abs(targetRow - guessRow) <= 1 && Math.abs(targetCol - guessCol) <= 1;
+                          
+                          return isCorrect ? (
+                            <CheckCircle2 size={16} className="text-emerald-500" />
+                          ) : (
+                            <AlertCircle size={16} className="text-black/20" />
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
@@ -291,6 +301,9 @@ export default function App() {
                     const isGuess = room.guesses.some(g => g.id === color.id);
                     const canInteract = (room.gameState === 'picking' && isCueGiver) || (room.gameState === 'guessing' && !isCueGiver);
                     
+                    // Show target to Cue Giver during guessing, or to everyone during results
+                    const showTargetIndicator = isTarget && (room.gameState === 'results' || (room.gameState === 'guessing' && isCueGiver));
+                    
                     return (
                       <motion.div
                         key={color.id}
@@ -311,9 +324,9 @@ export default function App() {
                             <div className="w-2 h-2 rounded-full bg-white shadow-sm border border-black/20" />
                           </div>
                         )}
-                        {isTarget && room.gameState === 'results' && (
+                        {showTargetIndicator && (
                           <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-1.5 h-1.5 rounded-full bg-black" />
+                            <div className={`rounded-full shadow-sm ${room.gameState === 'results' ? 'w-1.5 h-1.5 bg-black' : 'w-1 h-1 bg-black/40'}`} />
                           </div>
                         )}
                       </motion.div>
