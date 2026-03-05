@@ -5,21 +5,7 @@ import { Users, RotateCcw, CheckCircle2, AlertCircle, Palette } from 'lucide-rea
 import { GameRoom, Color } from './types';
 import { COLOR_GRID } from './constants';
 
-import { v4 as uuidv4 } from 'uuid';
-
 const socket: Socket = io();
-
-// Persistent Player ID to handle reconnections
-const getPlayerId = () => {
-  let id = localStorage.getItem('hues_cues_player_id');
-  if (!id) {
-    id = uuidv4();
-    localStorage.setItem('hues_cues_player_id', id);
-  }
-  return id;
-};
-
-const PLAYER_ID = getPlayerId();
 
 export default function App() {
   const [playerName, setPlayerName] = useState('');
@@ -52,19 +38,19 @@ export default function App() {
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
     if (playerName && roomId) {
-      socket.emit('join-room', { roomId, playerName, playerId: PLAYER_ID });
+      socket.emit('join-room', { roomId, playerName });
       setIsJoined(true);
     }
   };
 
   const handlePickColor = (color: Color) => {
-    if (room && room.gameState === 'picking' && PLAYER_ID === room.players[room.cueGiverIndex].playerId) {
+    if (room && room.gameState === 'picking' && socket.id === room.players[room.cueGiverIndex].id) {
       socket.emit('pick-color', { roomId: room.id, color });
     }
   };
 
   const handleGuessColor = (color: Color) => {
-    if (room && room.gameState === 'guessing' && PLAYER_ID !== room.players[room.cueGiverIndex].playerId) {
+    if (room && room.gameState === 'guessing' && socket.id !== room.players[room.cueGiverIndex].id) {
       socket.emit('guess-color', { roomId: room.id, color });
     }
   };
@@ -159,7 +145,7 @@ export default function App() {
     );
   }
 
-  const isCueGiver = PLAYER_ID === room.players[room.cueGiverIndex]?.playerId;
+  const isCueGiver = socket.id === room.players[room.cueGiverIndex]?.id;
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans">
@@ -179,9 +165,9 @@ export default function App() {
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-6">
               {room.players.map((p) => (
-                <div key={p.playerId} className="flex flex-col items-end">
+                <div key={p.id} className="flex flex-col items-end">
                   <span className="text-[10px] uppercase font-bold tracking-tighter text-black/40">
-                    {p.playerId === PLAYER_ID ? 'You' : 'Opponent'}
+                    {p.id === socket.id ? 'You' : 'Opponent'}
                   </span>
                   <div className="flex items-center gap-2">
                     <span className="font-bold">{p.name}</span>
@@ -237,12 +223,23 @@ export default function App() {
                     <div className="space-y-4">
                       <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
                         <p className="text-sm font-bold text-emerald-900 mb-1">Round Over!</p>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-emerald-700">Target was:</span>
-                          <div 
-                            className="w-6 h-6 rounded-md border border-black/10" 
-                            style={{ backgroundColor: room.targetColor?.hex }}
-                          />
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-emerald-700">Target was:</span>
+                            <div 
+                              className="w-6 h-6 rounded-md border border-black/10" 
+                              style={{ backgroundColor: room.targetColor?.hex }}
+                            />
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] uppercase tracking-wider text-emerald-600 font-bold">Round Score</p>
+                            <p className="text-xl font-black text-emerald-900">
+                              +{room.guesses.filter(g => {
+                                if (!room.targetColor) return false;
+                                return Math.abs(room.targetColor.row - g.row) <= 1 && Math.abs(room.targetColor.col - g.col) <= 1;
+                              }).length}
+                            </p>
+                          </div>
                         </div>
                       </div>
                       <button 
@@ -271,7 +268,7 @@ export default function App() {
                           <div className="w-8 h-8 rounded-lg border border-black/10 shadow-sm" style={{ backgroundColor: g.hex }} />
                           <span className="text-xs font-mono font-bold">Guess {i + 1}</span>
                         </div>
-                        {(() => {
+                        {room.gameState === 'results' && (() => {
                           if (!room.targetColor) return null;
                           const targetRow = room.targetColor.row;
                           const targetCol = room.targetColor.col;
@@ -329,6 +326,22 @@ export default function App() {
 
                     const showWinZone = isInWinZone && (room.gameState === 'results' || (room.gameState === 'guessing' && isCueGiver));
                     
+                    const borderClasses = (() => {
+                      if (!showWinZone || !room.targetColor) return '';
+                      const targetRow = room.targetColor.row;
+                      const targetCol = room.targetColor.col;
+                      const currentRow = color.row;
+                      const currentCol = color.col;
+                      
+                      let classes = 'after:absolute after:inset-0 after:pointer-events-none ';
+                      if (targetRow - currentRow === 1) classes += 'after:border-t-2 ';
+                      if (targetRow - currentRow === -1) classes += 'after:border-b-2 ';
+                      if (targetCol - currentCol === 1) classes += 'after:border-l-2 ';
+                      if (targetCol - currentCol === -1) classes += 'after:border-r-2 ';
+                      
+                      return classes + 'after:border-white after:border-solid';
+                    })();
+
                     return (
                       <motion.div
                         key={color.id}
@@ -341,21 +354,21 @@ export default function App() {
                           aspect-square rounded-sm cursor-pointer transition-shadow relative
                           ${canInteract ? 'hover:shadow-lg' : 'cursor-default'}
                           ${isTarget && room.gameState === 'results' ? 'ring-2 ring-black ring-offset-2 z-20' : ''}
-                          ${showWinZone && !isTarget ? 'after:absolute after:inset-0 after:border after:border-white/30 after:rounded-sm' : ''}
+                          ${borderClasses}
                         `}
                         style={{ backgroundColor: color.hex }}
                       >
                         {showWinZone && !isTarget && (
-                          <div className="absolute inset-0 bg-white/10 pointer-events-none" />
-                        )}
-                        {isGuess && (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-2 h-2 rounded-full bg-white shadow-sm border border-black/20" />
-                          </div>
+                          <div className="absolute inset-0 bg-white/5 pointer-events-none" />
                         )}
                         {showTargetIndicator && (
-                          <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                             <div className={`rounded-full shadow-sm ${room.gameState === 'results' ? 'w-1.5 h-1.5 bg-black' : 'w-1 h-1 bg-black/40'}`} />
+                          </div>
+                        )}
+                        {isGuess && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div className="w-2 h-2 rounded-full bg-white shadow-sm border border-black/20" />
                           </div>
                         )}
                       </motion.div>
