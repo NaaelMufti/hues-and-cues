@@ -25,7 +25,7 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
 
-    socket.on("join-room", ({ roomId, playerName, playerId }) => {
+    socket.on("join-room", ({ roomId, playerName }) => {
       socket.join(roomId);
       
       if (!rooms.has(roomId)) {
@@ -44,14 +44,11 @@ async function startServer() {
 
       const room = rooms.get(roomId);
       
-      // Check if player already in room by playerId
-      const existingPlayer = room.players.find((p: any) => p.playerId === playerId);
-      if (existingPlayer) {
-        // Update socket ID on reconnection so existing logic works
-        existingPlayer.id = socket.id;
-      } else if (room.players.length < 2) {
-        room.players.push({ id: socket.id, playerId, name: playerName, score: 0 });
-        room.scores[playerId] = 0;
+      // Check if player already in room
+      const existingPlayer = room.players.find((p: any) => p.id === socket.id);
+      if (!existingPlayer && room.players.length < 2) {
+        room.players.push({ id: socket.id, name: playerName, score: 0 });
+        room.scores[socket.id] = 0;
       }
 
       io.to(roomId).emit("room-update", room);
@@ -85,20 +82,23 @@ async function startServer() {
 
       room.guesses.push(color);
 
-      // 3x3 Proximity Check
-      const targetRow = room.targetColor.row;
-      const targetCol = room.targetColor.col;
-      
-      const guessRow = color.row;
-      const guessCol = color.col;
+      if (room.guesses.length >= room.maxGuesses) {
+        // Calculate total score for all guesses
+        let roundScore = 0;
+        const targetRow = room.targetColor.row;
+        const targetCol = room.targetColor.col;
 
-      const isCorrect = Math.abs(targetRow - guessRow) <= 1 && Math.abs(targetCol - guessCol) <= 1;
+        room.guesses.forEach((g: any) => {
+          const guessRow = g.row;
+          const guessCol = g.col;
+          const isCorrect = Math.abs(targetRow - guessRow) <= 1 && Math.abs(targetCol - guessCol) <= 1;
+          if (isCorrect) {
+            roundScore += 1;
+          }
+        });
 
-      if (isCorrect || room.guesses.length >= room.maxGuesses) {
-        if (isCorrect) {
-          room.scores[guesser.playerId] += 1;
-          room.players[guesserIndex].score = room.scores[guesser.playerId];
-        }
+        room.scores[socket.id] += roundScore;
+        room.players[guesserIndex].score = room.scores[socket.id];
         
         room.gameState = "results";
         io.to(roomId).emit("room-update", room);
@@ -144,4 +144,3 @@ async function startServer() {
 }
 
 startServer();
-
