@@ -83,15 +83,11 @@ async function startServer() {
       room.guesses.push(color);
 
       // 3x3 Proximity Check
-      // Grid is 30 columns wide
-      const targetIndex = room.targetColor.id;
-      const guessIndex = color.id;
+      const targetRow = room.targetColor.row;
+      const targetCol = room.targetColor.col;
       
-      const targetRow = Math.floor(targetIndex / 30);
-      const targetCol = targetIndex % 30;
-      
-      const guessRow = Math.floor(guessIndex / 30);
-      const guessCol = guessIndex % 30;
+      const guessRow = color.row;
+      const guessCol = color.col;
 
       const isCorrect = Math.abs(targetRow - guessRow) <= 1 && Math.abs(targetCol - guessCol) <= 1;
 
