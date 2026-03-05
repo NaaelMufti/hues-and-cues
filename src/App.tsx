@@ -258,12 +258,11 @@ export default function App() {
                           <span className="text-xs font-mono font-bold">Guess {i + 1}</span>
                         </div>
                         {(() => {
-                          const targetIndex = room.targetColor?.id ?? -1;
-                          const guessIndex = g.id;
-                          const targetRow = Math.floor(targetIndex / 30);
-                          const targetCol = targetIndex % 30;
-                          const guessRow = Math.floor(guessIndex / 30);
-                          const guessCol = guessIndex % 30;
+                          if (!room.targetColor) return null;
+                          const targetRow = room.targetColor.row;
+                          const targetCol = room.targetColor.col;
+                          const guessRow = g.row;
+                          const guessCol = g.col;
                           const isCorrect = Math.abs(targetRow - guessRow) <= 1 && Math.abs(targetCol - guessCol) <= 1;
                           
                           return isCorrect ? (
@@ -304,6 +303,18 @@ export default function App() {
                     // Show target to Cue Giver during guessing, or to everyone during results
                     const showTargetIndicator = isTarget && (room.gameState === 'results' || (room.gameState === 'guessing' && isCueGiver));
                     
+                    // Highlight the 3x3 "win zone"
+                    const isInWinZone = (() => {
+                      if (!room.targetColor) return false;
+                      const targetRow = room.targetColor.row;
+                      const targetCol = room.targetColor.col;
+                      const currentRow = color.row;
+                      const currentCol = color.col;
+                      return Math.abs(targetRow - currentRow) <= 1 && Math.abs(targetCol - currentCol) <= 1;
+                    })();
+
+                    const showWinZone = isInWinZone && (room.gameState === 'results' || (room.gameState === 'guessing' && isCueGiver));
+                    
                     return (
                       <motion.div
                         key={color.id}
@@ -316,9 +327,13 @@ export default function App() {
                           aspect-square rounded-sm cursor-pointer transition-shadow relative
                           ${canInteract ? 'hover:shadow-lg' : 'cursor-default'}
                           ${isTarget && room.gameState === 'results' ? 'ring-2 ring-black ring-offset-2 z-20' : ''}
+                          ${showWinZone && !isTarget ? 'after:absolute after:inset-0 after:border after:border-white/30 after:rounded-sm' : ''}
                         `}
                         style={{ backgroundColor: color.hex }}
                       >
+                        {showWinZone && !isTarget && (
+                          <div className="absolute inset-0 bg-white/10 pointer-events-none" />
+                        )}
                         {isGuess && (
                           <div className="absolute inset-0 flex items-center justify-center">
                             <div className="w-2 h-2 rounded-full bg-white shadow-sm border border-black/20" />
