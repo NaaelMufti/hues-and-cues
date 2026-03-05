@@ -5,7 +5,21 @@ import { Users, RotateCcw, CheckCircle2, AlertCircle, Palette } from 'lucide-rea
 import { GameRoom, Color } from './types';
 import { COLOR_GRID } from './constants';
 
+import { v4 as uuidv4 } from 'uuid';
+
 const socket: Socket = io();
+
+// Persistent Player ID to handle reconnections
+const getPlayerId = () => {
+  let id = localStorage.getItem('hues_cues_player_id');
+  if (!id) {
+    id = uuidv4();
+    localStorage.setItem('hues_cues_player_id', id);
+  }
+  return id;
+};
+
+const PLAYER_ID = getPlayerId();
 
 export default function App() {
   const [playerName, setPlayerName] = useState('');
@@ -38,19 +52,19 @@ export default function App() {
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
     if (playerName && roomId) {
-      socket.emit('join-room', { roomId, playerName });
+      socket.emit('join-room', { roomId, playerName, playerId: PLAYER_ID });
       setIsJoined(true);
     }
   };
 
   const handlePickColor = (color: Color) => {
-    if (room && room.gameState === 'picking' && socket.id === room.players[room.cueGiverIndex].id) {
+    if (room && room.gameState === 'picking' && PLAYER_ID === room.players[room.cueGiverIndex].playerId) {
       socket.emit('pick-color', { roomId: room.id, color });
     }
   };
 
   const handleGuessColor = (color: Color) => {
-    if (room && room.gameState === 'guessing' && socket.id !== room.players[room.cueGiverIndex].id) {
+    if (room && room.gameState === 'guessing' && PLAYER_ID !== room.players[room.cueGiverIndex].playerId) {
       socket.emit('guess-color', { roomId: room.id, color });
     }
   };
@@ -145,7 +159,7 @@ export default function App() {
     );
   }
 
-  const isCueGiver = socket.id === room.players[room.cueGiverIndex]?.id;
+  const isCueGiver = PLAYER_ID === room.players[room.cueGiverIndex]?.playerId;
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans">
@@ -165,9 +179,9 @@ export default function App() {
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-6">
               {room.players.map((p) => (
-                <div key={p.id} className="flex flex-col items-end">
+                <div key={p.playerId} className="flex flex-col items-end">
                   <span className="text-[10px] uppercase font-bold tracking-tighter text-black/40">
-                    {p.id === socket.id ? 'You' : 'Opponent'}
+                    {p.playerId === PLAYER_ID ? 'You' : 'Opponent'}
                   </span>
                   <div className="flex items-center gap-2">
                     <span className="font-bold">{p.name}</span>
